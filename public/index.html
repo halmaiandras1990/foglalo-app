@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Időpontfoglaló</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 700px;
+      margin: 40px auto;
+      padding: 0 16px;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      margin-bottom: 6px;
+      font-weight: bold;
+    }
+
+    select, input, button {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+
+    button {
+      cursor: pointer;
+      background: #222;
+      color: white;
+      border: none;
+      margin-top: 12px;
+    }
+
+    .slots {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .slot-btn {
+      background: #fff;
+      color: #222;
+      border: 1px solid #ccc;
+    }
+
+    .slot-btn.selected {
+      background: #222;
+      color: white;
+      border-color: #222;
+    }
+
+    .success {
+      color: green;
+      font-weight: bold;
+      margin-top: 12px;
+    }
+
+    .error {
+      color: #b00020;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Időpontfoglaló</h1>
+
+    <label for="service">Szolgáltatás</label>
+    <select id="service"></select>
+
+    <label for="date">Dátum</label>
+    <input type="date" id="date" />
+
+    <button id="loadSlotsBtn">Szabad időpontok betöltése</button>
+
+    <div id="slotsContainer" class="slots"></div>
+    <div id="slotMessage"></div>
+  </div>
+
+  <div class="card">
+    <h2>Foglalás</h2>
+
+    <label for="name">Név</label>
+    <input id="name" type="text" placeholder="Pl. Kovács Anna" />
+
+    <label for="phone">Telefonszám</label>
+    <input id="phone" type="text" placeholder="+36..." />
+
+    <button id="bookBtn">Foglalás véglegesítése</button>
+
+    <div id="bookingMessage"></div>
+  </div>
+
+  <script>
+    const serviceSelect = document.getElementById("service");
+    const dateInput = document.getElementById("date");
+    const loadSlotsBtn = document.getElementById("loadSlotsBtn");
+    const slotsContainer = document.getElementById("slotsContainer");
+    const slotMessage = document.getElementById("slotMessage");
+    const bookingMessage = document.getElementById("bookingMessage");
+
+    let selectedSlot = null;
+
+    async function loadServices() {
+      const res = await fetch("/api/services");
+      const services = await res.json();
+
+      serviceSelect.innerHTML = "";
+      Object.entries(services).forEach(([key, value]) => {
+        const opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = `${value.label} (${value.duration} perc)`;
+        serviceSelect.appendChild(opt);
+      });
+    }
+
+    async function loadSlots() {
+      selectedSlot = null;
+      bookingMessage.innerHTML = "";
+      slotsContainer.innerHTML = "";
+      slotMessage.innerHTML = "";
+
+      const date = dateInput.value;
+      const service = serviceSelect.value;
+
+      if (!date || !service) {
+        slotMessage.innerHTML = '<div class="error">Válassz szolgáltatást és dátumot.</div>';
+        return;
+      }
+
+      const res = await fetch(`/api/slots?date=${date}&service=${service}`);
+      const slots = await res.json();
+
+      if (!slots.length) {
+        slotMessage.innerHTML = '<div class="error">Nincs szabad időpont erre a napra.</div>';
+        return;
+      }
+
+      slots.forEach((slot) => {
+        const btn = document.createElement("button");
+        btn.className = "slot-btn";
+        btn.textContent = slot.start;
+        btn.onclick = () => {
+          document.querySelectorAll(".slot-btn").forEach((b) => b.classList.remove("selected"));
+          btn.classList.add("selected");
+          selectedSlot = slot.start;
+        };
+        slotsContainer.appendChild(btn);
+      });
+    }
+
+    async function bookAppointment() {
+      bookingMessage.innerHTML = "";
+
+      const name = document.getElementById("name").value.trim();
+      const phone = document.getElementById("phone").value.trim();
+      const service = serviceSelect.value;
+      const date = dateInput.value;
+
+      if (!name || !phone || !service || !date || !selectedSlot) {
+        bookingMessage.innerHTML = '<div class="error">Tölts ki mindent és válassz időpontot.</div>';
+        return;
+      }
+
+      const res = await fetch("/api/book", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name,
+          phone,
+          service,
+          date,
+          start: selectedSlot
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        bookingMessage.innerHTML = `<div class="error">${data.error || "Hiba történt."}</div>`;
+        return;
+      }
+
+      bookingMessage.innerHTML = '<div class="success">Sikeres foglalás.</div>';
+      await loadSlots();
+    }
+
+    loadSlotsBtn.addEventListener("click", loadSlots);
+    document.getElementById("bookBtn").addEventListener("click", bookAppointment);
+
+    loadServices();
+  </script>
+</body>
+</html>
