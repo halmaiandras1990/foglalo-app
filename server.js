@@ -10,11 +10,16 @@ const PORT = process.env.PORT || 8080;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ----- Alap beállítások -----
+// ----- ALAP KONFIG -----
 // FONTOS:
-// az "end" itt az UTOLSÓ FOGLALHATÓ KEZDÉSI IDŐ.
-// Tehát ha end = 16:00, akkor 16:00-ra még lehet foglalni.
+// Itt már többféle foglalási módra készülünk.
+// bookingMode lehet:
+// - fixed_slots
+// - interval_slots
+// - rolling_slots
 const CONFIG = {
+  bookingMode: "fixed_slots",
+
   workingHours: {
     1: { start: "08:00", end: "16:00" }, // hétfő
     2: { start: "08:00", end: "13:00" }, // kedd
@@ -22,15 +27,14 @@ const CONFIG = {
     4: { start: "08:00", end: "13:00" }, // csütörtök
     5: { start: "08:00", end: "16:00" }  // péntek
   },
+
   breaks: [
     { start: "12:30", end: "13:00" }
   ],
+
   bufferMinutes: 10,
 
-  // EZ AZ ÚJ LÉNYEG:
-  // milyen "szép" indulási időpontokat kínáljon fel a rendszer
-  // pl. 60 = 08:00, 09:00, 10:00...
-  // később ezt ügyfelenként adminból lehet állítani
+  // INTERVAL módhoz
   startIntervalMinutes: 60,
 
   services: {
@@ -41,13 +45,23 @@ const CONFIG = {
     pedikur: { label: "Pedikűr", duration: 60 },
     lab_gellakk: { label: "Láb gél lakk", duration: 120 },
     kez_lab_apolas: { label: "Kéz + láb ápolás", duration: 240 }
+  },
+
+  // FIXED SLOTS módhoz
+  // napokra bontott, előre definiált indulási időpontok
+  fixedSlots: {
+    1: ["08:00", "10:30", "13:00", "16:00"], // hétfő
+    2: ["08:00", "10:30", "13:00"],          // kedd
+    3: ["08:00", "10:30", "13:00", "16:00"], // szerda
+    4: ["08:00", "10:30", "13:00"],          // csütörtök
+    5: ["08:00", "10:30", "13:00", "16:00"]  // péntek
   }
 };
 
 // Ideiglenes memóriában tárolt foglalások
 const bookings = [];
 
-// ----- Segédfüggvények -----
+// ----- SEGÉDFÜGGVÉNYEK -----
 function toMinutes(timeStr) {
   const [h, m] = timeStr.split(":").map(Number);
   return h * 60 + m;
@@ -68,10 +82,71 @@ function getWeekdayFromDate(dateStr) {
   return d.getDay(); // vasárnap=0, hétfő=1, ...
 }
 
-// ----- ÚJ SLOT LOGIKA -----
-// Most már nem "gördülő" logika van,
-// hanem szép, fix indulási időpont-rács.
-function getAvailableSlots(date, serviceKey) {
+function getDayBookings(date) {
+  return bookings
+    .filter((b) => b.date === date)
+    .map((b) => ({
+      start: toMinutes(b.start),
+      end: toMinutes(b.end) + CONFIG.bufferMinutes
+    }));
+}
+
+function getBreakRanges() {
+  return CONFIG.breaks.map((b) => ({
+    start: toMinutes(b.start),
+    end: toMinutes(b.end)
+  }));
+}
+
+function isSlotValid(slotStart, slotEnd, dayBookings, breakRanges) {
+  const overlapsBreak = breakRanges.some((br) =>
+    overlaps(slotStart, slotEnd, br.start, br.end)
+  );
+  if (overlapsBreak) return false;
+
+  const overlapsBooking = dayBookings.some((bk) =>
+    overlaps(slotStart, slotEnd, bk.start, bk.end)
+  );
+  if (overlapsBooking) return false;
+
+  return true;
+}
+
+// ----- FOGALÁSI MÓDOK -----
+
+// 1) FIXED SLOTS
+function getAvailableSlotsFixed(date, serviceKey) {
+  const weekday = getWeekdayFromDate(date);
+  const fixedStarts = CONFIG.fixedSlots[weekday] || [];
+
+  const service = CONFIG.services[serviceKey];
+  if (!service) return [];
+
+  const totalDuration = service.duration + CONFIG.bufferMinutes;
+  const dayBookings = getDayBookings(date);
+  const breakRanges = getBreakRanges();
+
+  const slots = [];
+
+  for (const startStr of fixedStarts) {
+    const slotStart = toMinutes(startStr);
+    const slotEnd = slotStart + totalDuration;
+
+    if (!isSlotValid(slotStart, slotEnd, dayBookings, breakRanges)) {
+      continue;
+    }
+
+    slots.push({
+      start: startStr,
+      end: toTimeString(slotStart + service.duration)
+    });
+  }
+
+  return slots;
+}
+
+// 2) INTERVAL SLOTS
+function getAvailableSlotsInterval(date, serviceKey) {
   const weekday = getWeekdayFromDate(date);
   const dayHours = CONFIG.workingHours[weekday];
   if (!dayHours) return [];
@@ -85,17 +160,8 @@ function getAvailableSlots(date, serviceKey) {
   const dayStart = toMinutes(dayHours.start);
   const lastStart = toMinutes(dayHours.end);
 
-  const dayBookings = bookings
-    .filter((b) => b.date === date)
-    .map((b) => ({
-      start: toMinutes(b.start),
-      end: toMinutes(b.end) + CONFIG.bufferMinutes
-    }));
-
-  const breakRanges = CONFIG.breaks.map((b) => ({
-    start: toMinutes(b.start),
-    end: toMinutes(b.end)
-  }));
+  const dayBookings = getDayBookings(date);
+  const breakRanges = getBreakRanges();
 
   const slots = [];
 
@@ -106,15 +172,9 @@ function getAvailableSlots(date, serviceKey) {
   ) {
     const slotEnd = slotStart + totalDuration;
 
-    const overlapsBreak = breakRanges.some((br) =>
-      overlaps(slotStart, slotEnd, br.start, br.end)
-    );
-    if (overlapsBreak) continue;
-
-    const overlapsBooking = dayBookings.some((bk) =>
-      overlaps(slotStart, slotEnd, bk.start, bk.end)
-    );
-    if (overlapsBooking) continue;
+    if (!isSlotValid(slotStart, slotEnd, dayBookings, breakRanges)) {
+      continue;
+    }
 
     slots.push({
       start: toTimeString(slotStart),
@@ -125,11 +185,91 @@ function getAvailableSlots(date, serviceKey) {
   return slots;
 }
 
+// 3) ROLLING SLOTS
+function getAvailableSlotsRolling(date, serviceKey) {
+  const weekday = getWeekdayFromDate(date);
+  const dayHours = CONFIG.workingHours[weekday];
+  if (!dayHours) return [];
+
+  const service = CONFIG.services[serviceKey];
+  if (!service) return [];
+
+  const serviceDuration = service.duration;
+  const totalDuration = service.duration + CONFIG.bufferMinutes;
+
+  const dayStart = toMinutes(dayHours.start);
+  const lastStart = toMinutes(dayHours.end);
+
+  const dayBookings = getDayBookings(date).sort((a, b) => a.start - b.start);
+  const breakRanges = getBreakRanges().sort((a, b) => a.start - b.start);
+
+  const slots = [];
+  let current = dayStart;
+
+  while (current <= lastStart) {
+    const slotStart = current;
+    const slotEnd = slotStart + totalDuration;
+
+    const overlappingBreak = breakRanges.find((br) =>
+      overlaps(slotStart, slotEnd, br.start, br.end)
+    );
+
+    if (overlappingBreak) {
+      current = overlappingBreak.end;
+      continue;
+    }
+
+    const overlappingBooking = dayBookings.find((bk) =>
+      overlaps(slotStart, slotEnd, bk.start, bk.end)
+    );
+
+    if (overlappingBooking) {
+      current = overlappingBooking.end;
+      continue;
+    }
+
+    slots.push({
+      start: toTimeString(slotStart),
+      end: toTimeString(slotStart + serviceDuration)
+    });
+
+    current = slotStart + totalDuration;
+  }
+
+  return slots;
+}
+
+// ----- KÖZPONTI SLOT VÁLASZTÓ -----
+function getAvailableSlots(date, serviceKey) {
+  if (CONFIG.bookingMode === "fixed_slots") {
+    return getAvailableSlotsFixed(date, serviceKey);
+  }
+
+  if (CONFIG.bookingMode === "interval_slots") {
+    return getAvailableSlotsInterval(date, serviceKey);
+  }
+
+  if (CONFIG.bookingMode === "rolling_slots") {
+    return getAvailableSlotsRolling(date, serviceKey);
+  }
+
+  return [];
+}
+
 // ----- API-k -----
 
 // Szolgáltatások lekérése
 app.get("/api/services", (req, res) => {
   res.json(CONFIG.services);
+});
+
+// Opcionális: debug, hogy lásd melyik mód fut
+app.get("/api/config", (req, res) => {
+  res.json({
+    bookingMode: CONFIG.bookingMode,
+    startIntervalMinutes: CONFIG.startIntervalMinutes,
+    fixedSlots: CONFIG.fixedSlots
+  });
 });
 
 // Szabad slotok lekérése
@@ -178,10 +318,9 @@ app.post("/api/book", async (req, res) => {
   bookings.push(booking);
 
   try {
-    // ADMIN / SZOLGÁLTATÓ EMAIL
     const adminResult = await resend.emails.send({
       from: "Foglalás <onboarding@resend.dev>",
-      to: ["halmai.andras1990@gmail.com"], // teszt módban csak erre fog menni
+      to: ["halmai.andras1990@gmail.com"], // teszt módban csak ez fog menni
       subject: "ADMIN TESZT - Új foglalás érkezett",
       html: `
         <h2>Új foglalás</h2>
@@ -199,7 +338,6 @@ app.post("/api/book", async (req, res) => {
       console.error("ADMIN EMAIL HIBA:", adminResult.error);
     }
 
-    // VENDÉG EMAIL
     if (email) {
       const guestResult = await resend.emails.send({
         from: "Foglalás <onboarding@resend.dev>",
