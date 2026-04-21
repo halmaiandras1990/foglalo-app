@@ -160,12 +160,47 @@ app.post("/api/book", (req, res) => {
     end: selectedSlot.end
   };
 
-  bookings.push(booking);
+bookings.push(booking);
 
-  res.json({
-    success: true,
-    booking
+// Email küldés
+try {
+  // Anita értesítése
+  await resend.emails.send({
+    from: "Foglalas <onboarding@resend.dev>",
+    to: ["IDE_A_TE_EMAIL_CIMED"],
+    subject: "Új foglalás érkezett",
+    html: `
+      <h2>Új foglalás</h2>
+      <p><b>Név:</b> ${name}</p>
+      <p><b>Telefon:</b> ${phone}</p>
+      <p><b>Szolgáltatás:</b> ${serviceDef.label}</p>
+      <p><b>Dátum:</b> ${date}</p>
+      <p><b>Időpont:</b> ${start}</p>
+    `
   });
+
+  // Vendég visszaigazolás, ha adott meg emailt
+  if (email) {
+    await resend.emails.send({
+      from: "Foglalas <onboarding@resend.dev>",
+      to: [email],
+      subject: "Foglalás visszaigazolás",
+      html: `
+        <h2>Sikeres foglalás</h2>
+        <p>Köszönjük a foglalást.</p>
+        <p><b>Szolgáltatás:</b> ${serviceDef.label}</p>
+        <p><b>Dátum:</b> ${date}</p>
+        <p><b>Időpont:</b> ${start}</p>
+      `
+    });
+  }
+} catch (err) {
+  console.error("Email hiba:", err);
+}
+
+res.json({
+  success: true,
+  booking
 });
 
 // Teszt: foglalások listája
