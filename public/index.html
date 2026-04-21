@@ -106,6 +106,9 @@
     <label for="phone">Telefonszám</label>
     <input id="phone" type="text" placeholder="+36..." />
 
+    <label for="email">Email (opcionális)</label>
+<input id="email" type="email" placeholder="pelda@email.com" />
+    
     <button id="bookBtn">Foglalás véglegesítése</button>
 
     <div id="bookingMessage"></div>
@@ -172,10 +175,11 @@
     async function bookAppointment() {
       bookingMessage.innerHTML = "";
 
-      const name = document.getElementById("name").value.trim();
-      const phone = document.getElementById("phone").value.trim();
-      const service = serviceSelect.value;
-      const date = dateInput.value;
+const name = document.getElementById("name").value.trim();
+const phone = document.getElementById("phone").value.trim();
+const email = document.getElementById("email").value.trim();
+const service = serviceSelect.value;
+const date = dateInput.value;
 
       if (!name || !phone || !service || !date || !selectedSlot) {
         bookingMessage.innerHTML = '<div class="error">Tölts ki mindent és válassz időpontot.</div>';
@@ -190,6 +194,7 @@
         body: JSON.stringify({
           name,
           phone,
+          email,
           service,
           date,
           start: selectedSlot
