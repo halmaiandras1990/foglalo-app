@@ -10,10 +10,10 @@ const PORT = process.env.PORT || 8080;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// ----- Anita alap beállításai -----
+// ----- Alap beállítások -----
 // FONTOS:
-// az "end" itt most NEM a munka vége,
-// hanem az UTOLSÓ FOGLALHATÓ KEZDÉSI IDŐ.
+// az "end" itt az UTOLSÓ FOGLALHATÓ KEZDÉSI IDŐ.
+// Tehát ha end = 16:00, akkor 16:00-ra még lehet foglalni.
 const CONFIG = {
   workingHours: {
     1: { start: "08:00", end: "16:00" }, // hétfő
@@ -26,6 +26,13 @@ const CONFIG = {
     { start: "12:30", end: "13:00" }
   ],
   bufferMinutes: 10,
+
+  // EZ AZ ÚJ LÉNYEG:
+  // milyen "szép" indulási időpontokat kínáljon fel a rendszer
+  // pl. 60 = 08:00, 09:00, 10:00...
+  // később ezt ügyfelenként adminból lehet állítani
+  startIntervalMinutes: 60,
+
   services: {
     gel_lakk: { label: "Gél lakk", duration: 90 },
     epites: { label: "Építés", duration: 180 },
@@ -58,11 +65,12 @@ function overlaps(startA, endA, startB, endB) {
 
 function getWeekdayFromDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  return d.getDay(); // vasárnap=0, hétfő=1...
+  return d.getDay(); // vasárnap=0, hétfő=1, ...
 }
 
 // ----- ÚJ SLOT LOGIKA -----
-// A dayHours.end itt az UTOLSÓ FOGLALHATÓ KEZDÉSI IDŐ.
+// Most már nem "gördülő" logika van,
+// hanem szép, fix indulási időpont-rács.
 function getAvailableSlots(date, serviceKey) {
   const weekday = getWeekdayFromDate(date);
   const dayHours = CONFIG.workingHours[weekday];
@@ -82,47 +90,36 @@ function getAvailableSlots(date, serviceKey) {
     .map((b) => ({
       start: toMinutes(b.start),
       end: toMinutes(b.end) + CONFIG.bufferMinutes
-    }))
-    .sort((a, b) => a.start - b.start);
+    }));
 
-  const breakRanges = CONFIG.breaks
-    .map((b) => ({
-      start: toMinutes(b.start),
-      end: toMinutes(b.end)
-    }))
-    .sort((a, b) => a.start - b.start);
+  const breakRanges = CONFIG.breaks.map((b) => ({
+    start: toMinutes(b.start),
+    end: toMinutes(b.end)
+  }));
 
   const slots = [];
-  let current = dayStart;
 
-  while (current <= lastStart) {
-    const slotStart = current;
+  for (
+    let slotStart = dayStart;
+    slotStart <= lastStart;
+    slotStart += CONFIG.startIntervalMinutes
+  ) {
     const slotEnd = slotStart + totalDuration;
 
-    const overlappingBreak = breakRanges.find((br) =>
+    const overlapsBreak = breakRanges.some((br) =>
       overlaps(slotStart, slotEnd, br.start, br.end)
     );
+    if (overlapsBreak) continue;
 
-    if (overlappingBreak) {
-      current = overlappingBreak.end;
-      continue;
-    }
-
-    const overlappingBooking = dayBookings.find((bk) =>
+    const overlapsBooking = dayBookings.some((bk) =>
       overlaps(slotStart, slotEnd, bk.start, bk.end)
     );
-
-    if (overlappingBooking) {
-      current = overlappingBooking.end;
-      continue;
-    }
+    if (overlapsBooking) continue;
 
     slots.push({
       start: toTimeString(slotStart),
       end: toTimeString(slotStart + serviceDuration)
     });
-
-    current = slotStart + totalDuration;
   }
 
   return slots;
