@@ -168,7 +168,7 @@ app.post("/api/book", async (req, res) => {
     // Admin / Anita email értesítés
     const adminResult = await resend.emails.send({
       from: "Foglalás <onboarding@resend.dev>",
-      to: ["detubanters11@gmail.com"], // <-- ezt cseréld, ha másik emailre kéred
+      to: ["halmai.andras1990@gmail.com"], // <-- ezt cseréld, ha másik emailre kéred
       subject: "ADMIN TESZT - Új foglalás érkezett",
       html: `
         <h2>Új foglalás</h2>
