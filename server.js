@@ -165,11 +165,11 @@ app.post("/api/book", async (req, res) => {
   bookings.push(booking);
 
   try {
-    // Anita / admin értesítése
-    await resend.emails.send({
+    // Admin / Anita email értesítés
+    const adminResult = await resend.emails.send({
       from: "Foglalás <onboarding@resend.dev>",
-      to: ["detubanters11@gmail.com"],
-      subject: "Új foglalás érkezett",
+      to: ["detubanters11@gmail.com"], // <-- ezt cseréld, ha másik emailre kéred
+      subject: "ADMIN TESZT - Új foglalás érkezett",
       html: `
         <h2>Új foglalás</h2>
         <p><b>Név:</b> ${name}</p>
@@ -180,9 +180,15 @@ app.post("/api/book", async (req, res) => {
       `
     });
 
-    // Vendég visszaigazolás, ha van email
+    console.log("ADMIN EMAIL RESULT:", adminResult);
+
+    if (adminResult?.error) {
+      console.error("ADMIN EMAIL HIBA:", adminResult.error);
+    }
+
+    // Vendég email visszaigazolás
     if (email) {
-      await resend.emails.send({
+      const guestResult = await resend.emails.send({
         from: "Foglalás <onboarding@resend.dev>",
         to: [email],
         subject: "Foglalás visszaigazolás",
@@ -194,9 +200,15 @@ app.post("/api/book", async (req, res) => {
           <p><b>Időpont:</b> ${start}</p>
         `
       });
+
+      console.log("GUEST EMAIL RESULT:", guestResult);
+
+      if (guestResult?.error) {
+        console.error("GUEST EMAIL HIBA:", guestResult.error);
+      }
     }
   } catch (err) {
-    console.error("Email hiba:", err);
+    console.error("EMAIL KÜLDÉSI KIVÉTEL:", err);
   }
 
   res.json({
