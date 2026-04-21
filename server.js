@@ -11,6 +11,9 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // ----- Anita alap beállításai -----
+// FONTOS:
+// az "end" itt most NEM a munka vége,
+// hanem az UTOLSÓ FOGLALHATÓ KEZDÉSI IDŐ.
 const CONFIG = {
   workingHours: {
     1: { start: "08:00", end: "16:00" }, // hétfő
@@ -23,7 +26,6 @@ const CONFIG = {
     { start: "12:30", end: "13:00" }
   ],
   bufferMinutes: 10,
-  slotStepMinutes: 30,
   services: {
     gel_lakk: { label: "Gél lakk", duration: 90 },
     epites: { label: "Építés", duration: 180 },
@@ -36,7 +38,6 @@ const CONFIG = {
 };
 
 // Ideiglenes memóriában tárolt foglalások
-// Később ezt lecseréljük Google Calendar + adatbázis kombóra
 const bookings = [];
 
 // ----- Segédfüggvények -----
@@ -57,9 +58,11 @@ function overlaps(startA, endA, startB, endB) {
 
 function getWeekdayFromDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  return d.getDay(); // vasárnap=0, hétfő=1, ...
+  return d.getDay(); // vasárnap=0, hétfő=1...
 }
 
+// ----- ÚJ SLOT LOGIKA -----
+// A dayHours.end itt az UTOLSÓ FOGLALHATÓ KEZDÉSI IDŐ.
 function getAvailableSlots(date, serviceKey) {
   const weekday = getWeekdayFromDate(date);
   const dayHours = CONFIG.workingHours[weekday];
@@ -68,45 +71,58 @@ function getAvailableSlots(date, serviceKey) {
   const service = CONFIG.services[serviceKey];
   if (!service) return [];
 
+  const serviceDuration = service.duration;
   const totalDuration = service.duration + CONFIG.bufferMinutes;
+
   const dayStart = toMinutes(dayHours.start);
-  const dayEnd = toMinutes(dayHours.end);
+  const lastStart = toMinutes(dayHours.end);
 
   const dayBookings = bookings
     .filter((b) => b.date === date)
     .map((b) => ({
       start: toMinutes(b.start),
       end: toMinutes(b.end) + CONFIG.bufferMinutes
-    }));
+    }))
+    .sort((a, b) => a.start - b.start);
 
-  const breakRanges = CONFIG.breaks.map((b) => ({
-    start: toMinutes(b.start),
-    end: toMinutes(b.end)
-  }));
+  const breakRanges = CONFIG.breaks
+    .map((b) => ({
+      start: toMinutes(b.start),
+      end: toMinutes(b.end)
+    }))
+    .sort((a, b) => a.start - b.start);
 
   const slots = [];
+  let current = dayStart;
 
-  for (
-    let slotStart = dayStart;
-    slotStart + totalDuration <= dayEnd;
-    slotStart += CONFIG.slotStepMinutes
-  ) {
+  while (current <= lastStart) {
+    const slotStart = current;
     const slotEnd = slotStart + totalDuration;
 
-    const overlapsBreak = breakRanges.some((br) =>
+    const overlappingBreak = breakRanges.find((br) =>
       overlaps(slotStart, slotEnd, br.start, br.end)
     );
-    if (overlapsBreak) continue;
 
-    const overlapsBooking = dayBookings.some((bk) =>
+    if (overlappingBreak) {
+      current = overlappingBreak.end;
+      continue;
+    }
+
+    const overlappingBooking = dayBookings.find((bk) =>
       overlaps(slotStart, slotEnd, bk.start, bk.end)
     );
-    if (overlapsBooking) continue;
+
+    if (overlappingBooking) {
+      current = overlappingBooking.end;
+      continue;
+    }
 
     slots.push({
       start: toTimeString(slotStart),
-      end: toTimeString(slotStart + service.duration)
+      end: toTimeString(slotStart + serviceDuration)
     });
+
+    current = slotStart + totalDuration;
   }
 
   return slots;
@@ -165,10 +181,10 @@ app.post("/api/book", async (req, res) => {
   bookings.push(booking);
 
   try {
-    // Admin / Anita email értesítés
+    // ADMIN / SZOLGÁLTATÓ EMAIL
     const adminResult = await resend.emails.send({
       from: "Foglalás <onboarding@resend.dev>",
-      to: ["halmai.andras1990@gmail.com"], // <-- ezt cseréld, ha másik emailre kéred
+      to: ["halmai.andras1990@gmail.com"], // teszt módban csak erre fog menni
       subject: "ADMIN TESZT - Új foglalás érkezett",
       html: `
         <h2>Új foglalás</h2>
@@ -186,7 +202,7 @@ app.post("/api/book", async (req, res) => {
       console.error("ADMIN EMAIL HIBA:", adminResult.error);
     }
 
-    // Vendég email visszaigazolás
+    // VENDÉG EMAIL
     if (email) {
       const guestResult = await resend.emails.send({
         from: "Foglalás <onboarding@resend.dev>",
