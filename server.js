@@ -168,7 +168,7 @@ app.post("/api/book", async (req, res) => {
     // Anita / admin értesítése
     await resend.emails.send({
       from: "Foglalás <onboarding@resend.dev>",
-      to: ["IDE_A_SAJAT_EMAIL_CIMED"],
+      to: ["detubanters11@gmail.com"],
       subject: "Új foglalás érkezett",
       html: `
         <h2>Új foglalás</h2>
